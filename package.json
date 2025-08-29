@@ -5,6 +5,7 @@
   "homepage": "https://github.com/kukapay/uniswap-trader-mcp",
   "license": "MIT",
   "dependencies": {
+    "@genkit-ai/mcp": "^1.18.0",
     "@modelcontextprotocol/sdk": "^1.7.0",
     "@uniswap/smart-order-router": "^4.20.10",
     "@uniswap/v3-sdk": "^3.25.2",

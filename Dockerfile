@@ -11,8 +11,8 @@ RUN yarn install --frozen-lockfile --production
 # Bundle app source
 COPY . .
 
-# Expose standard IO for MCP
-# No port exposure needed for stdio
+# Expose HTTP port for streamable MCP
+EXPOSE 3000
 
-# Start the MCP server
+# Start the MCP HTTP server
 CMD ["node", "index.js"]
