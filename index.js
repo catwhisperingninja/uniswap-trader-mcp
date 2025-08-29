@@ -34,14 +34,29 @@ const WETHABI = [
 
 // Load environment variables and chain configurations
 require("dotenv").config();
-const CHAIN_CONFIGS = require("./chainConfigs");
+const { getChainConfigs, getChainConfigsFromEnv } = require("./chainConfigs");
 
 // Import utilities from ethers.utils for v5
 const { parseUnits, formatUnits } = ethers.utils;
 
-const WALLET_PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY;
-if (!WALLET_PRIVATE_KEY) {
-	throw new Error("WALLET_PRIVATE_KEY environment variable is required");
+// Global config storage for current request
+let currentConfig = {
+	infuraKey: process.env.INFURA_KEY,
+	walletPrivateKey: process.env.WALLET_PRIVATE_KEY,
+};
+
+// Function to ensure configuration is available
+function ensureConfig() {
+	if (!currentConfig.infuraKey) {
+		throw new Error(
+			"INFURA_KEY is required. Please provide it via Smithery config or environment variable."
+		);
+	}
+	if (!currentConfig.walletPrivateKey) {
+		throw new Error(
+			"WALLET_PRIVATE_KEY is required. Please provide it via Smithery config or environment variable."
+		);
+	}
 }
 
 // Initialize MCP server
@@ -53,7 +68,14 @@ const server = new McpServer({
 });
 
 // Get provider and router for a specific chain
-function getChainContext(chainId) {
+function getChainContext(chainId, infuraKey = null) {
+	// Use provided infuraKey or fall back to current config
+	const apiKey = infuraKey || currentConfig.infuraKey;
+	if (!apiKey) {
+		throw new Error("INFURA_KEY is required but not provided");
+	}
+
+	const CHAIN_CONFIGS = getChainConfigs(apiKey);
 	const config = CHAIN_CONFIGS[chainId];
 	if (!config) {
 		const supportedChains = Object.entries(CHAIN_CONFIGS)
@@ -93,14 +115,18 @@ async function createToken(
 }
 
 // Check wallet balance, throw error if zero
-async function checkBalance(provider, wallet, tokenAddress, isNative = false) {
+async function checkBalance(
+	provider,
+	wallet,
+	tokenAddress,
+	isNative = false,
+	chainName = "Unknown"
+) {
 	if (isNative) {
 		const balance = await provider.getBalance(wallet.address);
 		if (balance.isZero()) {
 			throw new Error(
-				`Zero ${
-					CHAIN_CONFIGS[provider.network.chainId].name
-				} native token balance. Please deposit funds to ${wallet.address}.`
+				`Zero ${chainName} native token balance. Please deposit funds to ${wallet.address}.`
 			);
 		}
 	} else {
@@ -149,7 +175,11 @@ server.tool(
 	},
 	async ({ chainId, tokenIn, tokenOut, amountIn, amountOut, tradeType }) => {
 		try {
-			const { provider, router, config } = getChainContext(chainId);
+			ensureConfig();
+			const { provider, router, config } = getChainContext(
+				chainId,
+				currentConfig.infuraKey
+			);
 
 			const tokenA = await createToken(chainId, tokenIn, provider);
 			const tokenB = await createToken(chainId, tokenOut, provider);
@@ -274,8 +304,16 @@ server.tool(
 		deadline,
 	}) => {
 		try {
-			const { provider, router, config } = getChainContext(chainId);
-			const wallet = new ethers.Wallet(WALLET_PRIVATE_KEY, provider);
+			ensureConfig();
+			const { provider, router, config } = getChainContext(
+				chainId,
+				currentConfig.infuraKey
+			);
+
+			const wallet = new ethers.Wallet(
+				currentConfig.walletPrivateKey,
+				provider
+			);
 
 			const isNativeIn = !tokenIn || tokenIn.toLowerCase() === "native";
 			const isNativeOut = !tokenOut || tokenOut.toLowerCase() === "native";
@@ -330,7 +368,8 @@ server.tool(
 				provider,
 				wallet,
 				isNativeIn ? null : tokenA.address,
-				isNativeIn
+				isNativeIn,
+				config.name
 			);
 
 			const swapRouter = new ethers.Contract(
@@ -499,6 +538,14 @@ async function startServer() {
 										Buffer.from(parsedUrl.query.config, "base64").toString()
 								  )
 								: {};
+
+							// Update current config for this request
+							if (config.infuraKey) {
+								currentConfig.infuraKey = config.infuraKey;
+							}
+							if (config.walletPrivateKey) {
+								currentConfig.walletPrivateKey = config.walletPrivateKey;
+							}
 
 							// Handle different HTTP methods for MCP
 							if (req.method === "GET") {
