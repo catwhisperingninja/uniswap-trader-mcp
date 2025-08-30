@@ -1,7 +1,27 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
 runtime: "container"
 build:
   dockerfile: "Dockerfile"
   dockerBuildPath: "."
 startCommand:
   type: "http"
-  configSchema: {}
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - infuraKey
+      - walletPrivateKey
+    properties:
+      infuraKey:
+        type: string
+        description: Infura API key for RPC endpoints
+      walletPrivateKey:
+        type: string
+        description: Private key of the wallet for executing swaps
+  exampleConfig:
+    infuraKey: abcd1234abcd1234abcd1234abcd1234
+    walletPrivateKey: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+env:
+  INFURA_KEY: "{{config.infuraKey}}"
+  WALLET_PRIVATE_KEY: "{{config.walletPrivateKey}}"
