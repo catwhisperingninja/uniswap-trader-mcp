@@ -497,110 +497,168 @@ server.prompt(
 );
 
 // HTTP Server setup for Smithery streamable deployment
-const http = require("http");
-const url = require("url");
+const express = require("express");
+const { randomUUID } = require("crypto");
+const {
+	StreamableHTTPServerTransport,
+} = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+const { isInitializeRequest } = require("@modelcontextprotocol/sdk/types.js");
 
 // Start HTTP server for streamable transport
 async function startServer() {
 	try {
 		const PORT = process.env.PORT || 3000;
 
-		const httpServer = http.createServer(async (req, res) => {
-			// Enable CORS
+		const app = express();
+		app.use(express.json());
+
+		// Map to store transports by session ID
+		const transports = {};
+
+		// Configuration injection middleware for Smithery
+		const injectConfig = (req, res, next) => {
+			try {
+				// Parse configuration from query params if provided (Smithery pattern)
+				const parsedUrl = new URL(req.url, `http://localhost:${PORT}`);
+				const config = parsedUrl.searchParams.get("config")
+					? JSON.parse(
+							Buffer.from(
+								parsedUrl.searchParams.get("config"),
+								"base64"
+							).toString()
+					  )
+					: {};
+
+				// Update current config for this request
+				if (config.infuraKey) {
+					currentConfig.infuraKey = config.infuraKey;
+				}
+				if (config.walletPrivateKey) {
+					currentConfig.walletPrivateKey = config.walletPrivateKey;
+				}
+			} catch (error) {
+				console.warn("Config injection failed:", error.message);
+			}
+			next();
+		};
+
+		// Enable CORS for all routes
+		app.use((req, res, next) => {
 			res.setHeader("Access-Control-Allow-Origin", "*");
 			res.setHeader(
 				"Access-Control-Allow-Methods",
 				"GET, POST, DELETE, OPTIONS"
 			);
-			res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+			res.setHeader(
+				"Access-Control-Allow-Headers",
+				"Content-Type, mcp-session-id"
+			);
+			res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
 
 			if (req.method === "OPTIONS") {
 				res.writeHead(200);
 				res.end();
 				return;
 			}
+			next();
+		});
 
-			const parsedUrl = url.parse(req.url, true);
+		// Apply config injection to MCP routes
+		app.use("/mcp", injectConfig);
 
-			// MCP endpoint
-			if (parsedUrl.pathname === "/mcp") {
-				try {
-					let body = "";
-					req.on("data", (chunk) => {
-						body += chunk.toString();
+		// Handle POST requests for client-to-server communication
+		app.post("/mcp", async (req, res) => {
+			try {
+				// Check for existing session ID
+				const sessionId = req.headers["mcp-session-id"];
+				let transport;
+
+				if (sessionId && transports[sessionId]) {
+					// Reuse existing transport
+					transport = transports[sessionId];
+				} else if (!sessionId && isInitializeRequest(req.body)) {
+					// New initialization request
+					transport = new StreamableHTTPServerTransport({
+						sessionIdGenerator: () => randomUUID(),
+						onsessioninitialized: (sessionId) => {
+							// Store the transport by session ID
+							transports[sessionId] = transport;
+						},
+						// DNS rebinding protection disabled for Smithery compatibility
+						enableDnsRebindingProtection: false,
 					});
 
-					req.on("end", async () => {
-						try {
-							// Parse configuration from query params if provided
-							const config = parsedUrl.query.config
-								? JSON.parse(
-										Buffer.from(parsedUrl.query.config, "base64").toString()
-								  )
-								: {};
-
-							// Update current config for this request
-							if (config.infuraKey) {
-								currentConfig.infuraKey = config.infuraKey;
-							}
-							if (config.walletPrivateKey) {
-								currentConfig.walletPrivateKey = config.walletPrivateKey;
-							}
-
-							// Handle different HTTP methods for MCP
-							if (req.method === "GET") {
-								// Return server info
-								res.writeHead(200, { "Content-Type": "application/json" });
-								res.end(
-									JSON.stringify({
-										name: server.name,
-										version: server.version,
-										description: server.description,
-									})
-								);
-							} else if (req.method === "POST") {
-								// Handle MCP requests
-								const request = JSON.parse(body);
-								const response = await server.handleRequest(request);
-								res.writeHead(200, { "Content-Type": "application/json" });
-								res.end(JSON.stringify(response));
-							} else if (req.method === "DELETE") {
-								// Handle cleanup
-								res.writeHead(200, { "Content-Type": "application/json" });
-								res.end(JSON.stringify({ success: true }));
-							} else {
-								res.writeHead(405, { "Content-Type": "application/json" });
-								res.end(JSON.stringify({ error: "Method not allowed" }));
-							}
-						} catch (error) {
-							console.error("Request handling error:", error);
-							res.writeHead(500, { "Content-Type": "application/json" });
-							res.end(JSON.stringify({ error: error.message }));
+					// Clean up transport when closed
+					transport.onclose = () => {
+						if (transport.sessionId) {
+							delete transports[transport.sessionId];
 						}
-					});
-				} catch (error) {
-					console.error("MCP request error:", error);
-					res.writeHead(500, { "Content-Type": "application/json" });
-					res.end(JSON.stringify({ error: error.message }));
-				}
-			} else {
-				// Health check endpoint
-				if (parsedUrl.pathname === "/health") {
-					res.writeHead(200, { "Content-Type": "application/json" });
-					res.end(
-						JSON.stringify({
-							status: "ok",
-							timestamp: new Date().toISOString(),
-						})
-					);
+					};
+
+					// Connect MCP server to transport
+					await server.connect(transport);
 				} else {
-					res.writeHead(404, { "Content-Type": "application/json" });
-					res.end(JSON.stringify({ error: "Not found" }));
+					// Invalid request
+					res.status(400).json({
+						jsonrpc: "2.0",
+						error: {
+							code: -32000,
+							message: "Bad Request: No valid session ID provided",
+						},
+						id: null,
+					});
+					return;
+				}
+
+				// Handle the request using proper MCP transport
+				await transport.handleRequest(req, res, req.body);
+			} catch (error) {
+				console.error("Request handling error:", error);
+				if (!res.headersSent) {
+					res.status(500).json({
+						jsonrpc: "2.0",
+						error: {
+							code: -32603,
+							message: "Internal server error",
+						},
+						id: null,
+					});
 				}
 			}
 		});
 
-		httpServer.listen(PORT, () => {
+		// Reusable handler for GET and DELETE requests
+		const handleSessionRequest = async (req, res) => {
+			const sessionId = req.headers["mcp-session-id"];
+			if (!sessionId || !transports[sessionId]) {
+				res.status(400).send("Invalid or missing session ID");
+				return;
+			}
+
+			const transport = transports[sessionId];
+			await transport.handleRequest(req, res);
+		};
+
+		// Handle GET requests for server-to-client notifications via SSE
+		app.get("/mcp", handleSessionRequest);
+
+		// Handle DELETE requests for session termination
+		app.delete("/mcp", handleSessionRequest);
+
+		// Health check endpoint (preserved for monitoring)
+		app.get("/health", (req, res) => {
+			res.json({
+				status: "ok",
+				timestamp: new Date().toISOString(),
+			});
+		});
+
+		// 404 handler
+		app.use((req, res) => {
+			res.status(404).json({ error: "Not found" });
+		});
+
+		app.listen(PORT, () => {
 			console.log(`Uniswap Trader MCP server listening on port ${PORT}`);
 			console.log(`Health check: http://localhost:${PORT}/health`);
 			console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
