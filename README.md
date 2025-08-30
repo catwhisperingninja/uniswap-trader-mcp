@@ -7,6 +7,8 @@ multiple blockchains.
 
 ## Features
 
+---
+
 - **Price Quotes**: Get real-time price quotes for token swaps with multi-hop
   route optimization.
 - **Swap Execution**: Execute swaps on Uniswap V3 with configurable slippage
