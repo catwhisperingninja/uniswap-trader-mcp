@@ -5,8 +5,9 @@ FROM node:lts-alpine
 WORKDIR /usr/src/app
 
 # Install app dependencies
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile --production
+# Use npm to avoid yarn requirement; install prod deps only
+COPY package*.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 # Bundle app source
 COPY . .
