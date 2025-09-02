@@ -95,16 +95,15 @@ async function createToken(
 	chainId,
 	address,
 	provider,
+	config,
 	symbol = "UNKNOWN",
-	name = "Unknown Token"
+	name = "unknownToken"
 ) {
-	const config = CHAIN_CONFIGS[chainId];
 	if (!address || address.toLowerCase() === "native") {
 		return new Token(chainId, config.weth, 18, symbol, name); // Native token defaults to 18 decimals
 	}
 	const tokenContract = new ethers.Contract(address, ERC20ABI, provider);
 	const decimals = await tokenContract.decimals();
-	console.log("=>", decimals);
 	return new Token(
 		chainId,
 		ethers.utils.getAddress(address),
@@ -176,15 +175,21 @@ server.tool(
 	async ({ chainId, tokenIn, tokenOut, amountIn, amountOut, tradeType }) => {
 		try {
 			ensureConfig();
-			console.log("[DEBUG] executeSwap: Calling getChainContext with chainId:", chainId);
+			console.log(
+				"[DEBUG] executeSwap: Calling getChainContext with chainId:",
+				chainId
+			);
 			const { provider, router, config } = getChainContext(
 				chainId,
 				currentConfig.infuraKey
 			);
-			console.log("[DEBUG] executeSwap: getChainContext successful, chain name:", config.name);
+			console.log(
+				"[DEBUG] executeSwap: getChainContext successful, chain name:",
+				config.name
+			);
 
-			const tokenA = await createToken(chainId, tokenIn, provider);
-			const tokenB = await createToken(chainId, tokenOut, provider);
+			const tokenA = await createToken(chainId, tokenIn, provider, config);
+			const tokenB = await createToken(chainId, tokenOut, provider, config);
 
 			if (tradeType === "exactIn" && !amountIn) {
 				throw new Error("amountIn is required for exactIn trades");
@@ -319,7 +324,9 @@ server.tool(
 			console.log("[DEBUG] executeSwap: Current config at start:", {
 				hasInfuraKey: !!currentConfig.infuraKey,
 				hasWalletKey: !!currentConfig.walletPrivateKey,
-				infuraKeyPrefix: currentConfig.infuraKey ? currentConfig.infuraKey.substring(0, 10) + "..." : "none",
+				infuraKeyPrefix: currentConfig.infuraKey
+					? currentConfig.infuraKey.substring(0, 10) + "..."
+					: "none",
 			});
 			ensureConfig();
 			console.log("[DEBUG] executeSwap: ensureConfig passed");
@@ -332,7 +339,10 @@ server.tool(
 				currentConfig.walletPrivateKey,
 				provider
 			);
-			console.log("[DEBUG] executeSwap: Wallet created, address:", wallet.address);
+			console.log(
+				"[DEBUG] executeSwap: Wallet created, address:",
+				wallet.address
+			);
 
 			const isNativeIn = !tokenIn || tokenIn.toLowerCase() === "native";
 			const isNativeOut = !tokenOut || tokenOut.toLowerCase() === "native";
@@ -341,15 +351,25 @@ server.tool(
 			const tokenA = await createToken(
 				chainId,
 				isNativeIn ? config.weth : tokenIn,
-				provider
+				provider,
+				config
 			);
-			console.log("[DEBUG] executeSwap: tokenA created:", tokenA.symbol, tokenA.address);
+			console.log(
+				"[DEBUG] executeSwap: tokenA created:",
+				tokenA.symbol,
+				tokenA.address
+			);
 			const tokenB = await createToken(
 				chainId,
 				isNativeOut ? config.weth : tokenOut,
-				provider
+				provider,
+				config
 			);
-			console.log("[DEBUG] executeSwap: tokenB created:", tokenB.symbol, tokenB.address);
+			console.log(
+				"[DEBUG] executeSwap: tokenB created:",
+				tokenB.symbol,
+				tokenB.address
+			);
 
 			if (tradeType === "exactIn" && !amountIn) {
 				throw new Error("amountIn is required for exactIn trades");
@@ -386,7 +406,9 @@ server.tool(
 			console.log("[DEBUG] executeSwap: Route calculated:", !!route);
 
 			if (!route) throw new Error("No route found");
-			console.log("[DEBUG] executeSwap: Route found, proceeding to balance check");
+			console.log(
+				"[DEBUG] executeSwap: Route found, proceeding to balance check"
+			);
 
 			// Check balance before swap
 			console.log("[DEBUG] executeSwap: Checking balance...");
@@ -453,7 +475,9 @@ server.tool(
 
 			const receipt = await tx.wait();
 
-			console.log("[DEBUG] executeSwap: Swap executed successfully, preparing response");
+			console.log(
+				"[DEBUG] executeSwap: Swap executed successfully, preparing response"
+			);
 			return {
 				content: [
 					{
@@ -491,7 +515,11 @@ server.tool(
 				],
 			};
 		} catch (error) {
-			console.error("[DEBUG] executeSwap: Error occurred:", error.message, error.stack);
+			console.error(
+				"[DEBUG] executeSwap: Error occurred:",
+				error.message,
+				error.stack
+			);
 			throw new Error(
 				`Swap failed: ${error.message}. Check wallet funds and network connection.`
 			);
@@ -551,13 +579,17 @@ async function startServer() {
 				// Parse configuration from query params if provided (Smithery pattern)
 				const parsedUrl = new URL(req.url, `http://localhost:${PORT}`);
 				const configParam = parsedUrl.searchParams.get("config");
-				console.log("[DEBUG] injectConfig: config param present:", !!configParam);
+				console.log(
+					"[DEBUG] injectConfig: config param present:",
+					!!configParam
+				);
 				const config = configParam
-					? JSON.parse(
-							Buffer.from(configParam, "base64").toString()
-					  )
+					? JSON.parse(Buffer.from(configParam, "base64").toString())
 					: {};
-				console.log("[DEBUG] injectConfig: Parsed config keys:", Object.keys(config));
+				console.log(
+					"[DEBUG] injectConfig: Parsed config keys:",
+					Object.keys(config)
+				);
 
 				// Update current config for this request
 				if (config.infuraKey) {
@@ -570,7 +602,7 @@ async function startServer() {
 				}
 				console.log("[DEBUG] injectConfig: Final currentConfig:", {
 					hasInfuraKey: !!currentConfig.infuraKey,
-					hasWalletKey: !!currentConfig.walletPrivateKey
+					hasWalletKey: !!currentConfig.walletPrivateKey,
 				});
 			} catch (error) {
 				console.warn("[DEBUG] Config injection failed:", error.message);
